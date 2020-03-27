@@ -58,14 +58,27 @@ recvTerm x y env =
                 v <- readChan chan
                 return (env++[(y,v)])
             Just _ -> error $ "Recv: illegal Channelel name "
- 
+
+swap m n x = if x == m then n else x            
+            
+alphaRename :: String -> String -> Pi a -> Pi a 
+alphaRename m n (Send x (Var y) p) = Send (swap m n x) (Var $ swap m n y) (alphaRename m n p)
+alphaRename m n (Send x y p) = Send (swap m n x) y (alphaRename m n p)
+alphaRename m n (Recv x y p) = Recv (swap m n x) (swap m n y) (alphaRename m n p)
+alphaRename m n (New  x p) = New (swap m n x) (alphaRename m n p) 
+alphaRename m n (Par p1 p2) = Par (alphaRename m n p1) (alphaRename m n p2)
+alphaRename m n (Peek (Var x)) = Peek (Var $ swap m n x)
+alphaRename m n (Bang k p) = Bang k (alphaRename m n p)
+alphaRename _ _ x = x
+         
+-- (v a). (v c). par(a(x).c<x>.0 | par((v b). a<b>. 0 | c(z). z))
 scopeExt :: Pi a -> Pi a
 scopeExt (Par (New vx p) q) 
     | notElem vx (freeVars q) = New vx (Par p q)
-    | otherwise = New (vx ++ "_n") (Par p q)
+    | otherwise = let nv = vx ++ "_n" in New nv (Par (alphaRename vx nv p) q)
 scopeExt (Par p (New vx q)) 
     | notElem vx (freeVars p) = New vx (Par p q)
-    | otherwise = New (vx ++ "_n") (Par p q)
+    | otherwise = let nv = vx ++ "_n" in New nv (Par p (alphaRename vx nv q))
 scopeExt x = x
  
 peekTerm :: Msg a -> Env a -> Msg a 
