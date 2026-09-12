@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cabal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up compatibility toolchain
+        uses: haskell-actions/setup@bda9c527d4136f7759733016190c34a24c84f4f4 # v2
+        with:
+          ghc-version: '9.6.7'
+          cabal-version: '3.10.3.0'
+
+      - name: Build library and executable
+        run: cabal build all
+
+      - name: Build library documentation
+        run: cabal haddock lib:pika
+
+      - name: Smoke-check the original REPL
+        run: |
+          printf '0\n:q\n' | cabal run exe:pika | tee "$RUNNER_TEMP/pika-smoke.txt"
+          grep -F 'Pika> Zero' "$RUNNER_TEMP/pika-smoke.txt"
+
+      - name: Create and rebuild the source distribution
+        run: |
+          cabal sdist --output-directory="$RUNNER_TEMP/pika-sdist"
+          mkdir -p "$RUNNER_TEMP/pika-unpacked"
+          tar -xzf "$RUNNER_TEMP/pika-sdist/pika-0.1.0.0.tar.gz" -C "$RUNNER_TEMP/pika-unpacked"
+          cd "$RUNNER_TEMP/pika-unpacked/pika-0.1.0.0"
+          cabal build all

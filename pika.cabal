@@ -1,0 +1,47 @@
+cabal-version:      2.4
+name:               pika
+version:            0.1.0.0
+synopsis:           An interpreter for a small untyped pi-calculus
+description:
+    A parser and concurrent evaluator for a finite process language with
+    channels, scoped names, parallel composition, and bounded replication.
+    Includes a reusable library and an interactive command-line interpreter.
+category:           Language
+license:            NONE
+author:             Alexandre Garcia de Oliveira
+maintainer:         https://github.com/romefeller/pika/issues
+homepage:           https://github.com/romefeller/pika
+bug-reports:        https://github.com/romefeller/pika/issues
+build-type:         Simple
+tested-with:        GHC == 9.6.7, GHC == 9.10.3
+extra-doc-files:    README.md, BUILDING.md
+extra-source-files: cabal.project, flake.nix, flake.lock
+
+source-repository head
+    type:     git
+    location: https://github.com/romefeller/pika.git
+
+common language-settings
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:    base >= 4.18 && < 4.22
+
+common interpreter-dependencies
+    build-depends:
+        parsec >= 3.1.16 && < 3.2,
+        stm >= 2.5 && < 2.6
+
+library
+    import:          language-settings, interpreter-dependencies
+    hs-source-dirs:  src
+    exposed-modules: Picalc, Syntax
+
+executable pika
+    import:         language-settings
+    hs-source-dirs: app
+    main-is:        Main.hs
+    build-depends:
+        pika,
+        mtl >= 2.3 && < 2.4,
+        transformers >= 0.6 && < 0.7
+    ghc-options:    -threaded -rtsopts

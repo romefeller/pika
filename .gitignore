@@ -1,0 +1,13 @@
+/dist-newstyle/
+/dist/
+/.ghc.environment.*
+/cabal.project.local
+/cabal.project.local~
+/result
+/result-*
+/.direnv/
+/tmp/
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o

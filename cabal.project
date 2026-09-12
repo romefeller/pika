@@ -1,0 +1,5 @@
+packages: ./pika.cabal
+
+-- Fix the package-index snapshot; flake.lock separately fixes the Nix toolchain.
+index-state: 2026-07-02T00:00:00Z
+write-ghc-environment-files: never

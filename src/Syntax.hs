@@ -17,15 +17,15 @@ parseString p str =
      Left e  -> error $ show e
      Right r -> r
 
-reservados :: [String]
-reservados = ["par","0","!"]
+reserved :: [String]
+reserved = ["par","0","!"]
 
 identifier = Token.identifier lexer -- parses an identifier
-reserved   = Token.reserved   lexer -- parses a reserved name
+reservedToken = Token.reserved lexer -- parses a reserved name
 whiteSpace = Token.whiteSpace lexer
 
 languageDef = emptyDef { 
-             Token.reservedNames   = reservados
+             Token.reservedNames   = reserved
             }
 ints = Token.integer lexer
 parens = Token.parens lexer
