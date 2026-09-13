@@ -62,6 +62,21 @@ evalExpr env (Eq e1 e2) =
         (VBool x, VBool y) -> VBool (x == y)
         _ -> error "Expr: type error in Eq"
 
+exprVars :: Expr -> [String]
+exprVars (EVar x) = [x]
+exprVars (Add a b) = exprVars a ++ exprVars b
+exprVars (Lt a b) = exprVars a ++ exprVars b
+exprVars (Le a b) = exprVars a ++ exprVars b
+exprVars (Eq a b) = exprVars a ++ exprVars b
+exprVars _ = []
+
+renameExpr :: String -> String -> Expr -> Expr
+renameExpr m n (EVar x) = EVar (swap m n x)
+renameExpr m n (Add a b) = Add (renameExpr m n a) (renameExpr m n b)
+renameExpr m n (Lt a b) = Lt (renameExpr m n a) (renameExpr m n b)
+renameExpr m n (Le a b) = Le (renameExpr m n a) (renameExpr m n b)
+renameExpr m n (Eq a b) = Eq (renameExpr m n a) (renameExpr m n b)
+renameExpr _ _ e = e
 
 data Term a = Term (Pi a) (Env a) deriving Show
 
@@ -75,6 +90,8 @@ freeVars = nub . freeVars'
         freeVars' (New x p) = filter (/= x) (freeVars' p) 
         freeVars' (Peek (Var x)) = [x]
         freeVars' (Bang _ p) = freeVars' p
+        freeVars' (Let x e p) = exprVars e ++ filter (/= x) (freeVars' p)
+        freeVars' (If e p q) = exprVars e ++ freeVars' p ++ freeVars' q
         freeVars' _ = []
         
 newTerm :: String -> Env a -> IO (Env a)
@@ -182,6 +199,8 @@ alphaRename m n (New  x p) = New (swap m n x) (alphaRename m n p)
 alphaRename m n (Par p1 p2) = Par (alphaRename m n p1) (alphaRename m n p2)
 alphaRename m n (Peek (Var x)) = Peek (Var $ swap m n x)
 alphaRename m n (Bang k p) = Bang k (alphaRename m n p)
+alphaRename m n (Let x e p) = Let (swap m n x) (renameExpr m n e) (alphaRename m n p)
+alphaRename m n (If e p q) = If (renameExpr m n e) (alphaRename m n p) (alphaRename m n q)
 alphaRename _ _ x = x
  
 peekTerm :: Msg a -> Env a -> Msg a 
@@ -219,3 +238,11 @@ eval (Term (If e p q) env) =
         VBool False -> eval (Term q env)
         _ -> error "If: the condition is not a boolean"
 eval (Term x _) = return x
+
+ex :: IO (Pi Value)
+ex = eval (Term (New "c"
+    (Par (Send "c" (Const (VInt 7)) Zero)
+         (Recv "c" "n"
+             (If (Lt (EVar "n") (KonstI 10))
+                 (Peek (Const (VBool True)))
+                 (Peek (Const (VBool False))))))) [])
