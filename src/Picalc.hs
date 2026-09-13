@@ -20,9 +20,48 @@ data Pi a = Zero
           | Par (Pi a) (Pi a)
           | Peek (Msg a)
           | Bang Int (Pi a)
+          | Let String Expr (Pi a)
+          | If Expr (Pi a) (Pi a)
     deriving Show
   
 type Env a = [(String, Msg a)]
+
+data Value = VInt Integer | VBool Bool deriving (Show, Eq)
+
+data Expr = KonstI Integer
+          | KonstB Bool
+          | EVar String
+          | Add Expr Expr
+          | Lt  Expr Expr
+          | Le  Expr Expr
+          | Eq  Expr Expr
+    deriving Show
+
+evalExpr :: Env Value -> Expr -> Value
+evalExpr _ (KonstI n) = VInt n
+evalExpr _ (KonstB b) = VBool b
+evalExpr env (EVar x) =
+    case resolveMsg (Var x) env of
+        Const v -> v
+        _ -> error $ "Expr: " ++ x ++ " is not a value"
+evalExpr env (Add e1 e2) =
+    case (evalExpr env e1, evalExpr env e2) of
+        (VInt x, VInt y) -> VInt (x + y)
+        _ -> error "Expr: type error in Add"
+evalExpr env (Lt e1 e2) =
+    case (evalExpr env e1, evalExpr env e2) of
+        (VInt x, VInt y) -> VBool (x < y)
+        _ -> error "Expr: type error in Lt"
+evalExpr env (Le e1 e2) =
+    case (evalExpr env e1, evalExpr env e2) of
+        (VInt x, VInt y) -> VBool (x <= y)
+        _ -> error "Expr: type error in Le"
+evalExpr env (Eq e1 e2) =
+    case (evalExpr env e1, evalExpr env e2) of
+        (VInt x, VInt y) -> VBool (x == y)
+        (VBool x, VBool y) -> VBool (x == y)
+        _ -> error "Expr: type error in Eq"
+
 
 data Term a = Term (Pi a) (Env a) deriving Show
 
@@ -149,12 +188,12 @@ peekTerm :: Msg a -> Env a -> Msg a
 peekTerm (Var x) env = resolveMsg (Var x) env
 peekTerm x _ = x
 
-forkPar :: Pi a -> Env a -> MVar (Pi a) -> IO ThreadId
+forkPar :: Pi Value -> Env Value -> MVar (Pi Value) -> IO ThreadId
 forkPar p env mvar = forkIO $ do
         pt <- (eval $ Term p env) 
         putMVar mvar pt    
     
-eval :: Term a -> IO (Pi a) 
+eval :: Term Value -> IO (Pi Value) 
 eval (Term (New vx p) env) = do
     ne <- newTerm vx env 
     np <- eval (Term p ne) 
@@ -173,4 +212,10 @@ eval (Term (Par p1 p2) env) = do
     forkPar p2 env mvar2
     pure Par <*> (takeMVar mvar1) <*> (takeMVar mvar2) 
 eval (Term (Peek m) env) = return (Peek (peekTerm m env))
+eval (Term (Let x e p) env) = eval (Term p ((x, Const (evalExpr env e)) : env))
+eval (Term (If e p q) env) =
+    case evalExpr env e of
+        VBool True -> eval (Term p env)
+        VBool False -> eval (Term q env)
+        _ -> error "If: the condition is not a boolean"
 eval (Term x _) = return x

@@ -8,7 +8,7 @@ import Text.ParserCombinators.Parsec hiding (State)
 
 import Picalc
 
-run :: Read a => String -> IO (Pi a)
+run :: String -> IO (Pi Value)
 run s = eval (parseString pikaParser s)
 
 parseString :: Parser a -> String -> a
@@ -32,12 +32,12 @@ parens = Token.parens lexer
 angles = Token.angles lexer
 lexer = Token.makeTokenParser languageDef
 
-pikaParser :: Read a => Parser (Term a)
+pikaParser :: Parser (Term Value)
 pikaParser = do 
     e <- whiteSpace >> parseExpr 
     return $ Term e []  
 
-parseExpr :: Read a => Parser (Pi a)
+parseExpr :: Parser (Pi Value)
 parseExpr =  parseZero
          <|> try parseNew 
          <|> try parseRecv 
@@ -47,7 +47,7 @@ parseExpr =  parseZero
          <|> parsePar
           
 
-parseBang :: Read a => Parser (Pi a)
+parseBang :: Parser (Pi Value)
 parseBang = do 
     char '!'
     n <- many1 digit
@@ -56,7 +56,7 @@ parseBang = do
     p <- parseExpr
     return (Bang (read n) p)
 
-parsePar :: Read a => Parser (Pi a)
+parsePar :: Parser (Pi Value)
 parsePar = do
     string "par"
     many space
@@ -71,7 +71,7 @@ parsePar = do
     char ')'
     return (Par p1 p2)  
       
-parseNew :: Read a => Parser (Pi a)
+parseNew :: Parser (Pi Value)
 parseNew = do 
     nu <- parens (char 'v' >> many space >> many1 letter)
     char '.'
@@ -79,30 +79,30 @@ parseNew = do
     p <- parseExpr
     return $ New nu p
 
-parseZero :: Read a => Parser (Pi a) 
+parseZero :: Parser (Pi Value) 
 parseZero = do
     char '0'
     return Zero
 
-parseMsg :: Read a => Parser (Msg a)
+parseMsg :: Parser (Msg Value)
 parseMsg = parseVar <|> parseConst 
 
-parseVar :: Parser (Msg a)
+parseVar :: Parser (Msg Value)
 parseVar = do
     v <- identifier
     return (Var v)
 
-parsePeek :: Read a => Parser (Pi a) 
+parsePeek :: Parser (Pi Value) 
 parsePeek = do
     c <- parseMsg
     return (Peek c)
     
-parseConst :: Read a => Parser (Msg a)
+parseConst :: Parser (Msg Value)
 parseConst = do 
-    c <- many1 digit
-    return (Const $ read c)
+    n <- ints
+    return (Const (VInt n))
     
-parseSend :: Read a => Parser (Pi a)
+parseSend :: Parser (Pi Value)
 parseSend = do
     m1 <- identifier
     m2 <- angles parseMsg
@@ -111,7 +111,7 @@ parseSend = do
         Nothing -> Send m1 m2 Zero
         Just p  -> Send m1 m2 p
 
-parseRecv :: Read a => Parser (Pi a) 
+parseRecv :: Parser (Pi Value) 
 parseRecv = do 
     m1 <- identifier
     m2 <- parens (many1 letter) 

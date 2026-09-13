@@ -17,5 +17,5 @@ main = do
         lift $ hFlush stdout
         ln <- lift getLine
         guard $ ln /= ":q"
-        e <- lift $ (run ln) :: MaybeT IO (Pi Integer)
+        e <- lift $ (run ln) :: MaybeT IO (Pi Value)
         lift $ putStrLn $ show e
