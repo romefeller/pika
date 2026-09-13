@@ -22,9 +22,22 @@ data Pi a = Zero
           | Bang Int (Pi a)
           | Let String Expr (Pi a)
           | If Expr (Pi a) (Pi a)
+          | Spawn String [String]
     deriving Show
+
+data Def a = Def String [String] (Pi a)
+
+type Defs a = [(String, Def a)]
   
 type Env a = [(String, Msg a)]
+
+spawnEnv :: [String] -> [String] -> Env a -> Env a
+spawnEnv [] [] _ = []
+spawnEnv (q:qs) (x:xs) env =
+    case resolveMsg (Var x) env of
+        Channel c -> (q, Channel c) : spawnEnv qs xs env
+        _ -> error $ "Spawn: argument " ++ x ++ " is not a channel"
+spawnEnv _ _ _ = error "Spawn: wrong number of arguments"
 
 data Value = VInt Integer | VBool Bool deriving (Show, Eq)
 
@@ -92,6 +105,7 @@ freeVars = nub . freeVars'
         freeVars' (Bang _ p) = freeVars' p
         freeVars' (Let x e p) = exprVars e ++ filter (/= x) (freeVars' p)
         freeVars' (If e p q) = exprVars e ++ freeVars' p ++ freeVars' q
+        freeVars' (Spawn _ args) = args
         freeVars' _ = []
         
 newTerm :: String -> Env a -> IO (Env a)
@@ -201,43 +215,51 @@ alphaRename m n (Peek (Var x)) = Peek (Var $ swap m n x)
 alphaRename m n (Bang k p) = Bang k (alphaRename m n p)
 alphaRename m n (Let x e p) = Let (swap m n x) (renameExpr m n e) (alphaRename m n p)
 alphaRename m n (If e p q) = If (renameExpr m n e) (alphaRename m n p) (alphaRename m n q)
+alphaRename m n (Spawn f args) = Spawn f (map (swap m n) args)
 alphaRename _ _ x = x
  
 peekTerm :: Msg a -> Env a -> Msg a 
 peekTerm (Var x) env = resolveMsg (Var x) env
 peekTerm x _ = x
 
-forkPar :: Pi Value -> Env Value -> MVar (Pi Value) -> IO ThreadId
-forkPar p env mvar = forkIO $ do
-        pt <- (eval $ Term p env) 
+forkPar :: Defs Value -> Pi Value -> Env Value -> MVar (Pi Value) -> IO ThreadId
+forkPar ds p env mvar = forkIO $ do
+        pt <- (evalD ds $ Term p env) 
         putMVar mvar pt    
     
-eval :: Term Value -> IO (Pi Value) 
-eval (Term (New vx p) env) = do
+evalD :: Defs Value -> Term Value -> IO (Pi Value) 
+evalD ds (Term (New vx p) env) = do
     ne <- newTerm vx env 
-    np <- eval (Term p ne) 
+    np <- evalD ds (Term p ne) 
     return (New vx np)
-eval (Term (Send x a p) env) = sendTerm x a env >> eval (Term p env)
-eval (Term (Recv x y p) env) =
-    recvTerm x y env >>= \ne -> eval (Term p ne)
-eval (Term t@(Par (New _ _) _) env) = eval (Term (scopeExtAvoid (map fst env) t) env)
-eval (Term t@(Par _ (New _ _)) env) = eval (Term (scopeExtAvoid (map fst env) t) env)
-eval (Term (Bang 0 p) env) = pure Zero
-eval (Term (Bang k p) env) = eval (Term (Par p (Bang (k-1) p)) env)
-eval (Term (Par p1 p2) env) = do
+evalD ds (Term (Send x a p) env) = sendTerm x a env >> evalD ds (Term p env)
+evalD ds (Term (Recv x y p) env) =
+    recvTerm x y env >>= \ne -> evalD ds (Term p ne)
+evalD ds (Term t@(Par (New _ _) _) env) = evalD ds (Term (scopeExtAvoid (map fst env) t) env)
+evalD ds (Term t@(Par _ (New _ _)) env) = evalD ds (Term (scopeExtAvoid (map fst env) t) env)
+evalD ds (Term (Bang 0 p) env) = pure Zero
+evalD ds (Term (Bang k p) env) = evalD ds (Term (Par p (Bang (k-1) p)) env)
+evalD ds (Term (Par p1 p2) env) = do
     mvar1 <- newEmptyMVar
     mvar2 <- newEmptyMVar
-    forkPar p1 env mvar1
-    forkPar p2 env mvar2
+    forkPar ds p1 env mvar1
+    forkPar ds p2 env mvar2
     pure Par <*> (takeMVar mvar1) <*> (takeMVar mvar2) 
-eval (Term (Peek m) env) = return (Peek (peekTerm m env))
-eval (Term (Let x e p) env) = eval (Term p ((x, Const (evalExpr env e)) : env))
-eval (Term (If e p q) env) =
+evalD ds (Term (Peek m) env) = return (Peek (peekTerm m env))
+evalD ds (Term (Let x e p) env) = evalD ds (Term p ((x, Const (evalExpr env e)) : env))
+evalD ds (Term (If e p q) env) =
     case evalExpr env e of
-        VBool True -> eval (Term p env)
-        VBool False -> eval (Term q env)
+        VBool True -> evalD ds (Term p env)
+        VBool False -> evalD ds (Term q env)
         _ -> error "If: the condition is not a boolean"
-eval (Term x _) = return x
+evalD ds (Term (Spawn f args) env) =
+    case lookup f ds of
+        Just (Def _ params body) -> evalD ds (Term body (spawnEnv params args env))
+        Nothing -> error $ "Spawn: definition " ++ f ++ " not found"
+evalD _ (Term x _) = return x
+
+eval :: Term Value -> IO (Pi Value)
+eval = evalD []
 
 ex :: IO (Pi Value)
 ex = eval (Term (New "c"
@@ -246,3 +268,10 @@ ex = eval (Term (New "c"
              (If (Lt (EVar "n") (KonstI 10))
                  (Peek (Const (VBool True)))
                  (Peek (Const (VBool False))))))) [])
+
+worker = Def "Worker" ["a"] (Recv "a" "r" (Send "r" (Const (VInt 8)) Zero))
+client = Def "Client" ["a"] (New "c" (Send "a" (Var "c") (Recv "c" "z" (Peek (Var "z")))))
+ds     = [("Worker", worker), ("Client", client)]
+
+runDemo :: IO (Pi Value)
+runDemo = evalD ds (Term (New "a" (Par (Spawn "Client" ["a"]) (Spawn "Worker" ["a"]))) [])
