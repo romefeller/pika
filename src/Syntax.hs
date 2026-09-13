@@ -108,8 +108,8 @@ parseSend = do
     m2 <- angles parseMsg
     k  <- optionMaybe (char '.' >> whiteSpace >> parseExpr)
     return $ case k of
-        Nothing -> Send m1 m2
-        Just p  -> Par (Send m1 m2) p
+        Nothing -> Send m1 m2 Zero
+        Just p  -> Send m1 m2 p
 
 parseRecv :: Read a => Parser (Pi a) 
 parseRecv = do 

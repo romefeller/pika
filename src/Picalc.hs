@@ -14,14 +14,14 @@ instance Show a => Show (Msg a) where
     show (Var x) = x
 
 data Pi a = Zero 
-          | Send String (Msg a) 
+          | Send String (Msg a) (Pi a) 
           | Recv String String (Pi a) 
           | New String (Pi a) 
           | Par (Pi a) (Pi a)
           | Peek (Msg a)
           | Bang Int (Pi a)
     deriving Show
-       
+  
 type Env a = [(String, Msg a)]
 
 data Term a = Term (Pi a) (Env a) deriving Show
@@ -29,8 +29,8 @@ data Term a = Term (Pi a) (Env a) deriving Show
 freeVars :: Pi a -> [String]
 freeVars = nub . freeVars'
     where
-        freeVars' (Send x (Var y)) = [x] ++ [y] 
-        freeVars' (Send x _) = [x] 
+        freeVars' (Send x (Var y) p) = [x] ++ [y] ++ freeVars' p 
+        freeVars' (Send x _ p) = [x] ++ freeVars' p 
         freeVars' (Recv x y p) = x : filter (/= y) (freeVars' p)
         freeVars' (Par p q) = freeVars' p ++ freeVars' q
         freeVars' (New x p) = filter (/= x) (freeVars' p) 
@@ -67,6 +67,61 @@ sendTerm x a env =
                 takeMVar ack
             Just _ -> error $ "Send: illegal Channelel name "
  
+renameMsg :: String -> String -> Msg a -> Msg a
+renameMsg m n (Var y) = Var (swap m n y)
+renameMsg _ _ msg = msg
+
+renameFree :: String -> String -> Pi a -> Pi a
+renameFree _ _ Zero = Zero
+renameFree m n (Send x msg p) = Send (swap m n x) (renameMsg m n msg) (renameFree m n p)
+renameFree m n (Peek msg) = Peek (renameMsg m n msg)
+renameFree m n (Par p q) = Par (renameFree m n p) (renameFree m n q)
+renameFree m n (Bang k p) = Bang k (renameFree m n p)
+renameFree m n (New x p)
+    | x == m = New x p
+    | otherwise = New x (renameFree m n p)
+renameFree m n (Recv x y p)
+    | y == m = Recv (swap m n x) y p
+    | otherwise = Recv (swap m n x) y (renameFree m n p)
+
+allNames :: Pi a -> [String]
+allNames = nub . go
+    where
+        go Zero = []
+        go (Send x msg p) = x : msgNames msg ++ go p
+        go (Recv x y p) = x : y : go p
+        go (New x p) = x : go p
+        go (Par p q) = go p ++ go q
+        go (Peek msg) = msgNames msg
+        go (Bang _ p) = go p
+        msgNames (Var y) = [y]
+        msgNames _ = []
+
+freshName :: String -> [String] -> String
+freshName base used = pick candidates
+    where
+        candidates = (base ++ "_n") : [base ++ "_n" ++ show k | k <- [1 :: Int ..]]
+        pick (c:cs) | notElem c used = c
+                    | otherwise = pick cs
+        pick [] = error "freshName: no candidate"
+
+-- (v a). (v c). par(a(x).c<x>.0 | par((v b). a<b>. 0 | c(z). z))
+scopeExt :: Pi a -> Pi a
+scopeExt = scopeExtAvoid []
+
+scopeExtAvoid :: [String] -> Pi a -> Pi a
+scopeExtAvoid extra t@(Par (New vx p) q)
+    | notElem vx (freeVars q) = New vx (Par p q)
+    | otherwise =
+        let nv = freshName vx (allNames t ++ extra)
+        in New nv (Par (renameFree vx nv p) q)
+scopeExtAvoid extra t@(Par p (New vx q))
+    | notElem vx (freeVars p) = New vx (Par p q)
+    | otherwise =
+        let nv = freshName vx (allNames t ++ extra)
+        in New nv (Par p (renameFree vx nv q))
+scopeExtAvoid _ x = x
+
 recvTerm :: String -> String -> Env a -> IO (Env a)
 recvTerm x y env = 
     case lookup x env of
@@ -81,24 +136,14 @@ recvTerm x y env =
 swap m n x = if x == m then n else x            
             
 alphaRename :: String -> String -> Pi a -> Pi a 
-alphaRename m n (Send x (Var y)) = Send (swap m n x) (Var $ swap m n y)
-alphaRename m n (Send x y) = Send (swap m n x) y 
+alphaRename m n (Send x (Var y) p) = Send (swap m n x) (Var $ swap m n y) (alphaRename m n p)
+alphaRename m n (Send x y p) = Send (swap m n x) y (alphaRename m n p)
 alphaRename m n (Recv x y p) = Recv (swap m n x) (swap m n y) (alphaRename m n p)
 alphaRename m n (New  x p) = New (swap m n x) (alphaRename m n p) 
 alphaRename m n (Par p1 p2) = Par (alphaRename m n p1) (alphaRename m n p2)
 alphaRename m n (Peek (Var x)) = Peek (Var $ swap m n x)
 alphaRename m n (Bang k p) = Bang k (alphaRename m n p)
 alphaRename _ _ x = x
-         
--- (v a). (v c). par(a(x).c<x>.0 | par((v b). a<b>. 0 | c(z). z))
-scopeExt :: Pi a -> Pi a
-scopeExt (Par (New vx p) q) 
-    | notElem vx (freeVars q) = New vx (Par p q)
-    | otherwise = let nv = vx ++ "_n" in New nv (Par (alphaRename vx nv p) q)
-scopeExt (Par p (New vx q)) 
-    | notElem vx (freeVars p) = New vx (Par p q)
-    | otherwise = let nv = vx ++ "_n" in New nv (Par p (alphaRename vx nv q))
-scopeExt x = x
  
 peekTerm :: Msg a -> Env a -> Msg a 
 peekTerm (Var x) env = resolveMsg (Var x) env
@@ -114,11 +159,11 @@ eval (Term (New vx p) env) = do
     ne <- newTerm vx env 
     np <- eval (Term p ne) 
     return (New vx np)
-eval (Term (Send x a) env) = sendTerm x a env >> return Zero
+eval (Term (Send x a p) env) = sendTerm x a env >> eval (Term p env)
 eval (Term (Recv x y p) env) =
     recvTerm x y env >>= \ne -> eval (Term p ne)
-eval (Term t@(Par (New vx p) q) env) = eval (Term (scopeExt t) env)
-eval (Term t@(Par p (New vx q)) env) = eval (Term (scopeExt t) env)
+eval (Term t@(Par (New _ _) _) env) = eval (Term (scopeExtAvoid (map fst env) t) env)
+eval (Term t@(Par _ (New _ _)) env) = eval (Term (scopeExtAvoid (map fst env) t) env)
 eval (Term (Bang 0 p) env) = pure Zero
 eval (Term (Bang k p) env) = eval (Term (Par p (Bang (k-1) p)) env)
 eval (Term (Par p1 p2) env) = do
