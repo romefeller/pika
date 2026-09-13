@@ -11,13 +11,8 @@
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          compiler = pkgs.haskellPackages.ghcWithPackages (p: [
-            p.mtl p.parsec p.stm p.transformers
-          ]);
         in {
-          default = pkgs.mkShell {
-            packages = [ compiler pkgs.cabal-install pkgs.z3 ];
-          };
+          default = import ./shell.nix { inherit pkgs; };
         });
     };
 }

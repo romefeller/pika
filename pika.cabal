@@ -15,7 +15,7 @@ bug-reports:        https://github.com/romefeller/pika/issues
 build-type:         Simple
 tested-with:        GHC == 9.6.7, GHC == 9.10.3
 extra-doc-files:    README.md, BUILDING.md
-extra-source-files: cabal.project, flake.nix, flake.lock
+extra-source-files: cabal.project, shell.nix, flake.nix, flake.lock
 
 source-repository head
     type:     git

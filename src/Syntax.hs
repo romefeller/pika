@@ -102,14 +102,14 @@ parseConst = do
     c <- many1 digit
     return (Const $ read c)
     
-parseSend :: Read a => Parser (Pi a) 
-parseSend = do 
+parseSend :: Read a => Parser (Pi a)
+parseSend = do
     m1 <- identifier
-    m2 <- angles parseMsg 
-    char '.'
-    many space
-    p <- parseExpr
-    return $ Send m1 m2 p
+    m2 <- angles parseMsg
+    k  <- optionMaybe (char '.' >> whiteSpace >> parseExpr)
+    return $ case k of
+        Nothing -> Send m1 m2
+        Just p  -> Par (Send m1 m2) p
 
 parseRecv :: Read a => Parser (Pi a) 
 parseRecv = do 
